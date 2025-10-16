@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inscreva-se na Nossa Newsletter</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #f0f2f5;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      margin: 0;
+    }
+    .container {
+      background-color: #ffffff;
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      width: 100%;
+      max-width: 450px;
+      text-align: center;
+    }
+    h1 {
+      color: #1c1e21;
+      margin-bottom: 15px;
+    }
+    p {
+      color: #606770;
+      margin-bottom: 30px;
+      font-size: 16px;
+    }
+    .form-group {
+      margin-bottom: 20px;
+      text-align: left;
+    }
+    input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #dddfe2;
+      border-radius: 6px;
+      font-size: 16px;
+      box-sizing: border-box;
+    }
+    button {
+      width: 100%;
+      padding: 14px;
+      background-color: #28a745; /* Cor verde para sucesso/inscrição */
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 18px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    button:hover {
+      background-color: #218838;
+    }
+    .status-message {
+      text-align: center;
+      margin-top: 20px;
+      font-weight: 600;
+      min-height: 20px;
+    }
+    .success { color: #28a745; }
+    .error { color: #dc3545; }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <h1>Junte-se a Nós!</h1>
+    <p>Receba nossas reflexões e novidades semanais diretamente no seu e-mail.</p>
+    <div class="form-group">
+      <input type="text" id="name" placeholder="Seu nome">
+    </div>
+    <div class="form-group">
+      <input type="email" id="email" placeholder="Seu melhor e-mail">
+    </div>
+    <button id="subscribeButton">Inscrever-se</button>
+    <div id="status" class="status-message"></div>
+  </div>
+
+  <script>
+    const nameInput = document.getElementById('name');
+    const emailInput = document.getElementById('email');
+    const subscribeButton = document.getElementById('subscribeButton');
+    const statusDiv = document.getElementById('status');
+    const apiUrl = 'http://localhost:3000/inscrever';
+
+    subscribeButton.addEventListener('click', async () => {
+      const name = nameInput.value;
+      const email = emailInput.value;
+
+      if (!name || !email) {
+        statusDiv.textContent = 'Por favor, preencha nome e e-mail.';
+        statusDiv.className = 'status-message error';
+        return;
+      }
+      
+      statusDiv.textContent = 'Enviando...';
+      statusDiv.className = 'status-message';
+
+      try {
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email }),
+        });
+
+        const responseText = await response.text();
+
+        if (response.ok) {
+          statusDiv.textContent = responseText;
+          statusDiv.className = 'status-message success';
+          nameInput.value = ''; // Limpa os campos após o sucesso
+          emailInput.value = '';
+        } else {
+          statusDiv.textContent = `Erro: ${responseText}`;
+          statusDiv.className = 'status-message error';
+        }
+      } catch (error) {
+        console.error('Erro de conexão:', error);
+        statusDiv.textContent = 'Erro de conexão com o servidor.';
+        statusDiv.className = 'status-message error';
+      }
+    });
+  </script>
+
+</body>
+</html>

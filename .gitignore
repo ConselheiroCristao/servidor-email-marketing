@@ -1,0 +1,9 @@
+# Arquivos de log e dependências
+node_modules
+
+# Ignorar TODOS os arquivos de variáveis de ambiente (SECRETO!)
+.env
+.env.*
+
+# Ignorar TODOS os arquivos de texto, que podem conter segredos
+*.txt
