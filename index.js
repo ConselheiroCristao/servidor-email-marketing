@@ -43,14 +43,31 @@ const createSendEmailCommand = (toAddress, fromAddress, subject, body) => {
   });
 };
 
-// --- Endpoint de inscrição (sem alterações) ---
+// --- ATUALIZADO! (Passo 7) Endpoint de inscrição ---
 app.post("/inscrever", async (req, res) => {
-  const { name, email } = req.body;
-  if (!name || !email) { return res.status(400).send("Erro: Nome e e-mail são obrigatórios."); }
+  
+  // 1. AGORA TAMBÉM RECEBEMOS O 'source'
+  const { name, email, source } = req.body;
+  
+  if (!name || !email) { 
+    return res.status(400).send("Erro: Nome e e-mail são obrigatórios."); 
+  }
+
   try {
-    const docRef = await db.collection('contatos').add({ name: name, email: email, createdAt: new Date() });
-    console.log(`Novo contato salvo com o ID: ${docRef.id}`);
+    // 2. PREPARAMOS O NOVO OBJETO PARA O FIREBASE
+    const novoContato = {
+      name: name,
+      email: email,
+      createdAt: new Date(),
+      source: source || 'desconhecida' // Se 'source' não for enviado, salva como 'desconhecida'
+    };
+
+    // 3. SALVAMOS O OBJETO COMPLETO
+    const docRef = await db.collection('contatos').add(novoContato);
+    
+    console.log(`Novo contato salvo com o ID: ${docRef.id} (Origem: ${novoContato.source})`);
     res.status(200).send("Inscrição realizada com sucesso!");
+
   } catch (error) {
     console.error("Erro ao salvar o novo contato:", error);
     return res.status(500).send("Erro ao salvar o contato.");
@@ -71,12 +88,10 @@ app.post("/enviar-campanha", async (req, res) => {
     let count = 0;
     for (const doc of snapshot.docs) {
       const contact = doc.data();
-      const contactId = doc.id; // Pegamos o ID único do documento no Firebase
+      const contactId = doc.id; 
 
-      // Criamos o URL único de cancelamento para este contato
       const unsubscribeUrl = `${process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000'}/cancelar-inscricao?id=${contactId}`;
-
-      // Criamos um rodapé padrão para todos os e-mails
+      
       const footer = `
         <br><br>
         <p style="font-size: 12px; color: #888888; text-align: center;">
@@ -120,7 +135,7 @@ app.get("/cancelar-inscricao", async (req, res) => {
 });
 
 
-// --- ATUALIZADO! (Passo 6) Endpoint Ouvinte do AWS SNS ---
+// --- Endpoint Ouvinte do AWS SNS (sem alterações) ---
 app.post("/aws-sns-listener", async (req, res) => {
   let payload;
   try {
@@ -128,18 +143,14 @@ app.post("/aws-sns-listener", async (req, res) => {
     const messageType = req.headers['x-amz-sns-message-type'];
 
     if (messageType === 'SubscriptionConfirmation') {
-      // --- O "APERTO DE MÃO" (já foi feito) ---
       console.log("AWS enviou uma confirmação de inscrição.");
       console.log("VISITE ESTE LINK PARA CONFIRMAR (SE AINDA NÃO FEZ):");
       console.log(payload.SubscribeURL);
       res.status(200).send("OK (SubscriptionConfirmation recebida)");
 
     } else if (messageType === 'Notification') {
-      // --- AQUI A MÁGICA ACONTECE! ---
       console.log("Notificação (Bounce/Complaint) recebida!");
       
-      // O 'Message' da AWS é um JSON *dentro* de uma string.
-      // Então, precisamos fazer um 'parse' duas vezes.
       const notificationBody = JSON.parse(payload.Message);
       const notificationType = notificationBody.notificationType;
 
@@ -147,33 +158,27 @@ app.post("/aws-sns-listener", async (req, res) => {
 
       if (notificationType === 'Bounce') {
         const bounce = notificationBody.bounce;
-        // Pega apenas 'Permanent' (e-mail não existe). Ignora 'Transient' (caixa cheia).
         if (bounce.bounceType === 'Permanent') {
           console.log(`Bounce PERMANENTE detectado. Tipo: ${bounce.bounceSubType}`);
-          // 'bouncedRecipients' é uma lista de quem falhou
           recipients = bounce.bouncedRecipients.map(r => r.emailAddress);
         } else {
           console.log(`Bounce temporário (Transient) ignorado. Tipo: ${bounce.bounceSubType}`);
         }
       } else if (notificationType === 'Complaint') {
         console.log("Reclamação (Complaint) detectada.");
-        // 'complainedRecipients' é uma lista de quem reclamou
         recipients = notificationBody.complaint.complainedRecipients.map(r => r.emailAddress);
       }
 
       if (recipients.length > 0) {
         console.log("Iniciando limpeza dos seguintes e-mails:", recipients);
         
-        // Para cada e-mail na lista de limpeza...
         for (const email of recipients) {
-          // 1. Procuramos no Firebase pelo documento que tenha esse e-mail
           const query = db.collection('contatos').where('email', '==', email);
           const snapshot = await query.get();
 
           if (snapshot.empty) {
             console.log(`E-mail ${email} não encontrado no Firebase (talvez já limpo).`);
           } else {
-            // 2. Deletamos todos os documentos encontrados (normalmente será só 1)
             snapshot.forEach(async (doc) => {
               await db.collection('contatos').doc(doc.id).delete();
               console.log(`SUCESSO: E-mail ${email} (ID: ${doc.id}) foi removido do Firebase.`);
