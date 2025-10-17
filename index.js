@@ -29,10 +29,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// --- NOVO! (Passo 3) ---
 // Middleware para o AWS SNS (que envia 'text/plain' mas o conteúdo é JSON)
 app.use(express.text({ type: ['text/plain', 'application/json'] }));
-// --- FIM DA ADIÇÃO ---
 
 const sesClient = new SESClient({ region: process.env.AWS_REGION });
 
@@ -102,18 +100,13 @@ app.post("/enviar-campanha", async (req, res) => {
 
 // --- Endpoint para cancelar a inscrição (sem alterações) ---
 app.get("/cancelar-inscricao", async (req, res) => {
-  // Pegamos o ID do contato que veio no link (ex: ?id=j3KobCCw...)
   const contactId = req.query.id;
-
   if (!contactId) {
     return res.status(400).send("ID do contato não fornecido. Não foi possível cancelar a inscrição.");
   }
-
   try {
-    // Dizemos ao Firebase para deletar o documento com este ID na coleção 'contatos'
     await db.collection('contatos').doc(contactId).delete();
     console.log(`Contato com ID ${contactId} foi removido.`);
-    // Enviamos uma mensagem de sucesso para o navegador do usuário
     res.send(`
       <div style="font-family: sans-serif; text-align: center; padding-top: 50px;">
         <h1>Inscrição Cancelada</h1>
@@ -127,45 +120,71 @@ app.get("/cancelar-inscricao", async (req, res) => {
 });
 
 
-// --- NOVO! (Passo 4) Endpoint Ouvinte do AWS SNS ---
-// Este é o "portal" que vai receber as notificações da AWS
+// --- ATUALIZADO! (Passo 6) Endpoint Ouvinte do AWS SNS ---
 app.post("/aws-sns-listener", async (req, res) => {
   let payload;
   try {
-    // O body vem como 'text/plain', então primeiro o transformamos em objeto
     payload = JSON.parse(req.body);
-    console.log("Mensagem recebida da AWS SNS!");
-
-    // 1. Verificação do Tipo de Mensagem
-    // A AWS nos diz que tipo de mensagem está enviando
     const messageType = req.headers['x-amz-sns-message-type'];
 
     if (messageType === 'SubscriptionConfirmation') {
-      // --- ESTE É O "APERTO DE MÃO" ---
-      // A AWS está testando se este endpoint é real
+      // --- O "APERTO DE MÃO" (já foi feito) ---
       console.log("AWS enviou uma confirmação de inscrição.");
-      console.log("------------------------------------------------------");
-      console.log("VISITE ESTE LINK PARA CONFIRMAR (COPIE E COLE NO SEU NAVEGADOR):");
-      // Nós pegamos o link que ela enviou e mostramos no log
+      console.log("VISITE ESTE LINK PARA CONFIRMAR (SE AINDA NÃO FEZ):");
       console.log(payload.SubscribeURL);
-      console.log("------------------------------------------------------");
-      
-      // Apenas respondemos 'OK' para a AWS saber que recebemos
-      res.status(200).send("OK (SubscriptionConfirmation recebida, cheque os logs para confirmar)");
+      res.status(200).send("OK (SubscriptionConfirmation recebida)");
 
     } else if (messageType === 'Notification') {
-      // --- AQUI É O AVISO DE BOUNCE (QUE FAREMOS NO PRÓXIMO PASSO) ---
-      console.log("Recebida uma Notificação (provavelmente um bounce ou complaint).");
+      // --- AQUI A MÁGICA ACONTECE! ---
+      console.log("Notificação (Bounce/Complaint) recebida!");
       
-      // No próximo passo, vamos adicionar o código para
-      // 1. Ler o 'payload.Message'
-      // 2. Descobrir qual e-mail falhou
-      // 3. Deletar esse e-mail do Firebase
+      // O 'Message' da AWS é um JSON *dentro* de uma string.
+      // Então, precisamos fazer um 'parse' duas vezes.
+      const notificationBody = JSON.parse(payload.Message);
+      const notificationType = notificationBody.notificationType;
+
+      let recipients = [];
+
+      if (notificationType === 'Bounce') {
+        const bounce = notificationBody.bounce;
+        // Pega apenas 'Permanent' (e-mail não existe). Ignora 'Transient' (caixa cheia).
+        if (bounce.bounceType === 'Permanent') {
+          console.log(`Bounce PERMANENTE detectado. Tipo: ${bounce.bounceSubType}`);
+          // 'bouncedRecipients' é uma lista de quem falhou
+          recipients = bounce.bouncedRecipients.map(r => r.emailAddress);
+        } else {
+          console.log(`Bounce temporário (Transient) ignorado. Tipo: ${bounce.bounceSubType}`);
+        }
+      } else if (notificationType === 'Complaint') {
+        console.log("Reclamação (Complaint) detectada.");
+        // 'complainedRecipients' é uma lista de quem reclamou
+        recipients = notificationBody.complaint.complainedRecipients.map(r => r.emailAddress);
+      }
+
+      if (recipients.length > 0) {
+        console.log("Iniciando limpeza dos seguintes e-mails:", recipients);
+        
+        // Para cada e-mail na lista de limpeza...
+        for (const email of recipients) {
+          // 1. Procuramos no Firebase pelo documento que tenha esse e-mail
+          const query = db.collection('contatos').where('email', '==', email);
+          const snapshot = await query.get();
+
+          if (snapshot.empty) {
+            console.log(`E-mail ${email} não encontrado no Firebase (talvez já limpo).`);
+          } else {
+            // 2. Deletamos todos os documentos encontrados (normalmente será só 1)
+            snapshot.forEach(async (doc) => {
+              await db.collection('contatos').doc(doc.id).delete();
+              console.log(`SUCESSO: E-mail ${email} (ID: ${doc.id}) foi removido do Firebase.`);
+            });
+          }
+        }
+      }
       
-      res.status(200).send("OK (Notificação recebida)");
+      res.status(200).send("OK (Notificação processada)");
 
     } else {
-      // Outro tipo de mensagem que não esperamos
       console.warn("Recebida mensagem SNS de tipo desconhecido:", messageType);
       res.status(400).send("Tipo de mensagem não suportado.");
     }
