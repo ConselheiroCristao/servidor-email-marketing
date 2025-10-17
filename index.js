@@ -59,7 +59,7 @@ app.post("/inscrever", async (req, res) => {
   }
 });
 
-// --- ATUALIZADO! Endpoint de envio de campanha ---
+// --- Endpoint de envio de campanha (sem alterações) ---
 app.post("/enviar-campanha", async (req, res) => {
   console.log("Recebido pedido para enviar campanha! Lendo contatos do Firebase...");
   const { subject, body } = req.body;
@@ -100,8 +100,7 @@ app.post("/enviar-campanha", async (req, res) => {
   }
 });
 
-// --- NOVO! Endpoint para cancelar a inscrição ---
-// Usamos app.get porque o usuário vai ACESSAR este link pelo navegador.
+// --- Endpoint para cancelar a inscrição (sem alterações) ---
 app.get("/cancelar-inscricao", async (req, res) => {
   // Pegamos o ID do contato que veio no link (ex: ?id=j3KobCCw...)
   const contactId = req.query.id;
@@ -124,6 +123,57 @@ app.get("/cancelar-inscricao", async (req, res) => {
   } catch (error) {
     console.error("Erro ao cancelar inscrição:", error);
     res.status(500).send("Ocorreu um erro ao processar seu pedido. Por favor, tente novamente.");
+  }
+});
+
+
+// --- NOVO! (Passo 4) Endpoint Ouvinte do AWS SNS ---
+// Este é o "portal" que vai receber as notificações da AWS
+app.post("/aws-sns-listener", async (req, res) => {
+  let payload;
+  try {
+    // O body vem como 'text/plain', então primeiro o transformamos em objeto
+    payload = JSON.parse(req.body);
+    console.log("Mensagem recebida da AWS SNS!");
+
+    // 1. Verificação do Tipo de Mensagem
+    // A AWS nos diz que tipo de mensagem está enviando
+    const messageType = req.headers['x-amz-sns-message-type'];
+
+    if (messageType === 'SubscriptionConfirmation') {
+      // --- ESTE É O "APERTO DE MÃO" ---
+      // A AWS está testando se este endpoint é real
+      console.log("AWS enviou uma confirmação de inscrição.");
+      console.log("------------------------------------------------------");
+      console.log("VISITE ESTE LINK PARA CONFIRMAR (COPIE E COLE NO SEU NAVEGADOR):");
+      // Nós pegamos o link que ela enviou e mostramos no log
+      console.log(payload.SubscribeURL);
+      console.log("------------------------------------------------------");
+      
+      // Apenas respondemos 'OK' para a AWS saber que recebemos
+      res.status(200).send("OK (SubscriptionConfirmation recebida, cheque os logs para confirmar)");
+
+    } else if (messageType === 'Notification') {
+      // --- AQUI É O AVISO DE BOUNCE (QUE FAREMOS NO PRÓXIMO PASSO) ---
+      console.log("Recebida uma Notificação (provavelmente um bounce ou complaint).");
+      
+      // No próximo passo, vamos adicionar o código para
+      // 1. Ler o 'payload.Message'
+      // 2. Descobrir qual e-mail falhou
+      // 3. Deletar esse e-mail do Firebase
+      
+      res.status(200).send("OK (Notificação recebida)");
+
+    } else {
+      // Outro tipo de mensagem que não esperamos
+      console.warn("Recebida mensagem SNS de tipo desconhecido:", messageType);
+      res.status(400).send("Tipo de mensagem não suportado.");
+    }
+
+  } catch (error) {
+    console.error("Erro ao processar mensagem do SNS:", error);
+    console.error("Body recebido (pode não ser JSON válido):", req.body);
+    res.status(500).send("Erro interno no processamento do SNS.");
   }
 });
 
