@@ -26,11 +26,39 @@ initializeFirebase();
 
 const db = admin.firestore();
 const app = express();
-app.use(cors());
+
+// --- ATUALIZADO! (Passo 9) Configuração explícita do CORS ---
+// Definimos exatamente quem pode acessar nosso servidor
+const corsOptions = {
+  // Adicione todos os domínios que hospedarão seu formulário
+  origin: [
+    'https://conselheirocristao.com.br', 
+    'http://localhost', // Para seus testes locais
+    'http://127.0.0.1' // Para seus testes locais
+  ],
+  methods: ['GET', 'POST', 'OPTIONS'], // Permite os métodos que usamos
+  allowedHeaders: ['Content-Type'] // Permite o cabeçalho que enviamos
+};
+
+// Aplicamos as opções de CORS. Isso irá responder corretamente
+// à requisição 'OPTIONS' (preflight) que o navegador envia.
+app.use(cors(corsOptions));
+// --- FIM DA ATUALIZAÇÃO ---
+
+
+// --- ATUALIZADO! (Passo 9) Corrigindo conflito de Middlewares ---
+
+// 1. O express.json() vai cuidar das rotas /inscrever e /enviar-campanha
+// (Ele lê application/json)
 app.use(express.json());
 
-// Middleware para o AWS SNS (que envia 'text/plain' mas o conteúdo é JSON)
-app.use(express.text({ type: ['text/plain', 'application/json'] }));
+// 2. O express.text() vai cuidar APENAS do /aws-sns-listener
+// (Ele lê text/plain, que é o que o SNS envia)
+app.use(express.text({ type: 'text/plain' }));
+
+// (A linha problemática que lia 'application/json' com express.text foi removida)
+// --- FIM DA ATUALIZAÇÃO ---
+
 
 const sesClient = new SESClient({ region: process.env.AWS_REGION });
 
@@ -43,31 +71,22 @@ const createSendEmailCommand = (toAddress, fromAddress, subject, body) => {
   });
 };
 
-// --- ATUALIZADO! (Passo 7) Endpoint de inscrição ---
+// --- Endpoint de inscrição (sem alterações no código interno) ---
 app.post("/inscrever", async (req, res) => {
-  
-  // 1. AGORA TAMBÉM RECEBEMOS O 'source'
   const { name, email, source } = req.body;
-  
   if (!name || !email) { 
     return res.status(400).send("Erro: Nome e e-mail são obrigatórios."); 
   }
-
   try {
-    // 2. PREPARAMOS O NOVO OBJETO PARA O FIREBASE
     const novoContato = {
       name: name,
       email: email,
       createdAt: new Date(),
-      source: source || 'desconhecida' // Se 'source' não for enviado, salva como 'desconhecida'
+      source: source || 'desconhecida'
     };
-
-    // 3. SALVAMOS O OBJETO COMPLETO
     const docRef = await db.collection('contatos').add(novoContato);
-    
     console.log(`Novo contato salvo com o ID: ${docRef.id} (Origem: ${novoContato.source})`);
     res.status(200).send("Inscrição realizada com sucesso!");
-
   } catch (error) {
     console.error("Erro ao salvar o novo contato:", error);
     return res.status(500).send("Erro ao salvar o contato.");
@@ -89,16 +108,13 @@ app.post("/enviar-campanha", async (req, res) => {
     for (const doc of snapshot.docs) {
       const contact = doc.data();
       const contactId = doc.id; 
-
       const unsubscribeUrl = `${process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000'}/cancelar-inscricao?id=${contactId}`;
-      
       const footer = `
         <br><br>
         <p style="font-size: 12px; color: #888888; text-align: center;">
           Para não receber mais nossos e-mails, <a href="${unsubscribeUrl}">clique aqui</a>.
         </p>
       `;
-
       const personalizedBody = (body.replace(/\[Nome do Assinante\]/g, contact.name || 'Amigo(a)')) + footer;
       const sendEmailCommand = createSendEmailCommand(contact.email, fromEmail, subject, personalizedBody);
       
@@ -139,7 +155,8 @@ app.get("/cancelar-inscricao", async (req, res) => {
 app.post("/aws-sns-listener", async (req, res) => {
   let payload;
   try {
-    payload = JSON.parse(req.body);
+    // Agora, isso SÓ VAI LER text/plain, graças à nossa correção
+    payload = JSON.parse(req.body); 
     const messageType = req.headers['x-amz-sns-message-type'];
 
     if (messageType === 'SubscriptionConfirmation') {
@@ -150,10 +167,8 @@ app.post("/aws-sns-listener", async (req, res) => {
 
     } else if (messageType === 'Notification') {
       console.log("Notificação (Bounce/Complaint) recebida!");
-      
       const notificationBody = JSON.parse(payload.Message);
       const notificationType = notificationBody.notificationType;
-
       let recipients = [];
 
       if (notificationType === 'Bounce') {
@@ -171,11 +186,9 @@ app.post("/aws-sns-listener", async (req, res) => {
 
       if (recipients.length > 0) {
         console.log("Iniciando limpeza dos seguintes e-mails:", recipients);
-        
         for (const email of recipients) {
           const query = db.collection('contatos').where('email', '==', email);
           const snapshot = await query.get();
-
           if (snapshot.empty) {
             console.log(`E-mail ${email} não encontrado no Firebase (talvez já limpo).`);
           } else {
@@ -186,14 +199,12 @@ app.post("/aws-sns-listener", async (req, res) => {
           }
         }
       }
-      
       res.status(200).send("OK (Notificação processada)");
 
     } else {
       console.warn("Recebida mensagem SNS de tipo desconhecido:", messageType);
       res.status(400).send("Tipo de mensagem não suportado.");
     }
-
   } catch (error) {
     console.error("Erro ao processar mensagem do SNS:", error);
     console.error("Body recebido (pode não ser JSON válido):", req.body);
