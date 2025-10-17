@@ -23,19 +23,9 @@
       max-width: 450px;
       text-align: center;
     }
-    h1 {
-      color: #1c1e21;
-      margin-bottom: 15px;
-    }
-    p {
-      color: #606770;
-      margin-bottom: 30px;
-      font-size: 16px;
-    }
-    .form-group {
-      margin-bottom: 20px;
-      text-align: left;
-    }
+    h1 { color: #1c1e21; margin-bottom: 15px; }
+    p { color: #606770; margin-bottom: 30px; font-size: 16px; }
+    .form-group { margin-bottom: 20px; text-align: left; }
     input {
       width: 100%;
       padding: 12px;
@@ -47,7 +37,7 @@
     button {
       width: 100%;
       padding: 14px;
-      background-color: #28a745; /* Cor verde para sucesso/inscrição */
+      background-color: #28a745;
       color: white;
       border: none;
       border-radius: 6px;
@@ -56,9 +46,7 @@
       cursor: pointer;
       transition: background-color 0.2s;
     }
-    button:hover {
-      background-color: #218838;
-    }
+    button:hover { background-color: #218838; }
     .status-message {
       text-align: center;
       margin-top: 20px;
@@ -89,7 +77,9 @@
     const emailInput = document.getElementById('email');
     const subscribeButton = document.getElementById('subscribeButton');
     const statusDiv = document.getElementById('status');
-    const apiUrl = 'http://localhost:3000/inscrever';
+    
+    // URL CORRIGIDO E COMPLETO
+    const apiUrl = 'https://servidor-email-marketing-mensagens.onrender.com/inscrever';
 
     subscribeButton.addEventListener('click', async () => {
       const name = nameInput.value;
@@ -116,7 +106,7 @@
         if (response.ok) {
           statusDiv.textContent = responseText;
           statusDiv.className = 'status-message success';
-          nameInput.value = ''; // Limpa os campos após o sucesso
+          nameInput.value = '';
           emailInput.value = '';
         } else {
           statusDiv.textContent = `Erro: ${responseText}`;
@@ -132,3 +122,4 @@
 
 </body>
 </html>
+

@@ -7,3 +7,4 @@ node_modules
 
 # Ignorar TODOS os arquivos de texto, que podem conter segredos
 *.txt
+*.json
