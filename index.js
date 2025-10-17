@@ -6,33 +6,23 @@ import 'dotenv/config';
 import admin from 'firebase-admin';
 import fs from 'fs';
 
-// --- ATUALIZAÇÃO IMPORTANTE! ---
-// Esta função irá carregar nossas credenciais do Firebase de forma inteligente.
+// --- Função de inicialização do Firebase (sem alterações) ---
 function initializeFirebase() {
-  // Se a variável de ambiente FIREBASE_CREDENTIALS existir (no Render)...
   if (process.env.FIREBASE_CREDENTIALS) {
-    // ...usamos o conteúdo dela.
     const serviceAccount = JSON.parse(process.env.FIREBASE_CREDENTIALS);
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
-    });
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
     console.log("Firebase iniciado com credenciais de ambiente.");
   } else {
-    // Senão (no nosso computador local)...
-    // ... lemos o arquivo local.
     try {
       const serviceAccount = JSON.parse(fs.readFileSync('./firebase-credentials.json'));
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-      });
+      admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
       console.log("Firebase iniciado com arquivo de credenciais local.");
     } catch (error) {
-      console.error("Erro ao ler o arquivo de credenciais local. Certifique-se de que 'firebase-credentials.json' existe ou configure a variável de ambiente FIREBASE_CREDENTIALS.", error);
+      console.error("Erro ao ler o arquivo de credenciais local.", error);
     }
   }
 }
-
-initializeFirebase(); // Executamos a função para iniciar a conexão.
+initializeFirebase();
 
 const db = admin.firestore();
 const app = express();
@@ -40,30 +30,21 @@ app.use(cors());
 app.use(express.json());
 const sesClient = new SESClient({ region: process.env.AWS_REGION });
 
-// --- O RESTO DO CÓDIGO (ENDPOINTS E SERVIDOR) CONTINUA EXATAMENTE O MESMO ---
-
+// --- Função de envio de e-mail (sem alterações) ---
 const createSendEmailCommand = (toAddress, fromAddress, subject, body) => {
   return new SendEmailCommand({
     Destination: { ToAddresses: [toAddress] },
-    Message: {
-      Body: { Html: { Charset: "UTF-8", Data: body } },
-      Subject: { Charset: "UTF-8", Data: subject },
-    },
+    Message: { Body: { Html: { Charset: "UTF-8", Data: body } }, Subject: { Charset: "UTF-8", Data: subject } },
     Source: fromAddress,
   });
 };
 
+// --- Endpoint de inscrição (sem alterações) ---
 app.post("/inscrever", async (req, res) => {
   const { name, email } = req.body;
-  if (!name || !email) {
-    return res.status(400).send("Erro: Nome e e-mail são obrigatórios.");
-  }
+  if (!name || !email) { return res.status(400).send("Erro: Nome e e-mail são obrigatórios."); }
   try {
-    const docRef = await db.collection('contatos').add({
-      name: name,
-      email: email,
-      createdAt: new Date()
-    });
+    const docRef = await db.collection('contatos').add({ name: name, email: email, createdAt: new Date() });
     console.log(`Novo contato salvo com o ID: ${docRef.id}`);
     res.status(200).send("Inscrição realizada com sucesso!");
   } catch (error) {
@@ -72,23 +53,36 @@ app.post("/inscrever", async (req, res) => {
   }
 });
 
+// --- ATUALIZADO! Endpoint de envio de campanha ---
 app.post("/enviar-campanha", async (req, res) => {
   console.log("Recebido pedido para enviar campanha! Lendo contatos do Firebase...");
   const { subject, body } = req.body;
   const fromEmail = "contato@conselheirocristao.com.br";
-  if (!subject || !body) {
-    return res.status(400).send("Erro: Assunto (subject) e corpo (body) são obrigatórios.");
-  }
+  if (!subject || !body) { return res.status(400).send("Erro: Assunto (subject) e corpo (body) são obrigatórios."); }
+
   try {
     const snapshot = await db.collection('contatos').get();
-    if (snapshot.empty) {
-      return res.status(400).send("Nenhum contato encontrado.");
-    }
+    if (snapshot.empty) { return res.status(400).send("Nenhum contato encontrado."); }
+
     let count = 0;
     for (const doc of snapshot.docs) {
       const contact = doc.data();
-      const personalizedBody = body.replace(/\[Nome do Assinante\]/g, contact.name || 'Amigo(a)');
+      const contactId = doc.id; // Pegamos o ID único do documento no Firebase
+
+      // Criamos o URL único de cancelamento para este contato
+      const unsubscribeUrl = `${process.env.RENDER_EXTERNAL_URL || 'http://localhost:3000'}/cancelar-inscricao?id=${contactId}`;
+
+      // Criamos um rodapé padrão para todos os e-mails
+      const footer = `
+        <br><br>
+        <p style="font-size: 12px; color: #888888; text-align: center;">
+          Para não receber mais nossos e-mails, <a href="${unsubscribeUrl}">clique aqui</a>.
+        </p>
+      `;
+
+      const personalizedBody = (body.replace(/\[Nome do Assinante\]/g, contact.name || 'Amigo(a)')) + footer;
       const sendEmailCommand = createSendEmailCommand(contact.email, fromEmail, subject, personalizedBody);
+      
       await sesClient.send(sendEmailCommand);
       console.log(`E-mail enviado para: ${contact.email}`);
       count++;
@@ -100,6 +94,35 @@ app.post("/enviar-campanha", async (req, res) => {
   }
 });
 
+// --- NOVO! Endpoint para cancelar a inscrição ---
+// Usamos app.get porque o usuário vai ACESSAR este link pelo navegador.
+app.get("/cancelar-inscricao", async (req, res) => {
+  // Pegamos o ID do contato que veio no link (ex: ?id=j3KobCCw...)
+  const contactId = req.query.id;
+
+  if (!contactId) {
+    return res.status(400).send("ID do contato não fornecido. Não foi possível cancelar a inscrição.");
+  }
+
+  try {
+    // Dizemos ao Firebase para deletar o documento com este ID na coleção 'contatos'
+    await db.collection('contatos').doc(contactId).delete();
+    console.log(`Contato com ID ${contactId} foi removido.`);
+    // Enviamos uma mensagem de sucesso para o navegador do usuário
+    res.send(`
+      <div style="font-family: sans-serif; text-align: center; padding-top: 50px;">
+        <h1>Inscrição Cancelada</h1>
+        <p>Você não receberá mais nossos e-mails. Sentiremos sua falta!</p>
+      </div>
+    `);
+  } catch (error) {
+    console.error("Erro ao cancelar inscrição:", error);
+    res.status(500).send("Ocorreu um erro ao processar seu pedido. Por favor, tente novamente.");
+  }
+});
+
+
+// --- PASSO FINAL: Iniciar o servidor ---
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`Servidor rodando na porta ${port}`);
