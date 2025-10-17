@@ -28,6 +28,12 @@ const db = admin.firestore();
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// --- NOVO! (Passo 3) ---
+// Middleware para o AWS SNS (que envia 'text/plain' mas o conteúdo é JSON)
+app.use(express.text({ type: ['text/plain', 'application/json'] }));
+// --- FIM DA ADIÇÃO ---
+
 const sesClient = new SESClient({ region: process.env.AWS_REGION });
 
 // --- Função de envio de e-mail (sem alterações) ---
