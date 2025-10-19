@@ -27,18 +27,13 @@ initializeFirebase();
 const db = admin.firestore();
 const app = express();
 
-// --- ATUALIZADO! Configuração de CORS para aceitar qualquer domínio ---
+// --- Configuração de CORS (a sua versão, sem alterações) ---
 const corsOptions = {
   origin: function (origin, callback) {
-    // Permite requisições sem origin (apps mobile, Postman, etc)
     if (!origin) return callback(null, true);
-    
-    // Permite qualquer domínio HTTPS ou localhost/127.0.0.1
     if (origin.startsWith('https://') || origin.includes('localhost') || origin.includes('127.0.0.1')) {
       callback(null, true);
     } else {
-      // Se preferir aceitar HTTP também, descomente a linha abaixo:
-      // callback(null, true);
       callback(new Error('Origem não permitida pelo CORS'));
     }
   },
@@ -49,14 +44,11 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 console.log("✅ CORS configurado para aceitar qualquer domínio HTTPS");
-// --- FIM DA ATUALIZAÇÃO ---
+// --- FIM DA CONFIGURAÇÃO DE CORS ---
 
 
-// --- Middlewares para processar requisições ---
-// 1. O express.json() vai cuidar das rotas /inscrever e /enviar-campanha
+// --- Middlewares para processar requisições (sem alterações) ---
 app.use(express.json());
-
-// 2. O express.text() vai cuidar APENAS do /aws-sns-listener
 app.use(express.text({ type: 'text/plain' }));
 
 
@@ -71,30 +63,21 @@ const createSendEmailCommand = (toAddress, fromAddress, subject, body) => {
   });
 };
 
-// --- Endpoint de inscrição (otimizado para capturar origem) ---
+// --- Endpoint de inscrição (sem alterações) ---
 app.post("/inscrever", async (req, res) => {
   const { name, email, source } = req.body;
-  
   if (!name || !email) { 
     return res.status(400).send("Erro: Nome e e-mail são obrigatórios."); 
   }
-  
   try {
     const novoContato = {
       name: name,
       email: email,
       createdAt: new Date(),
-      source: source || 'origem-desconhecida' // Captura a origem ou define padrão
+      source: source || 'origem-desconhecida'
     };
-    
     const docRef = await db.collection('contatos').add(novoContato);
-    
-    console.log(`✅ Novo contato salvo!`);
-    console.log(`   ID: ${docRef.id}`);
-    console.log(`   Nome: ${name}`);
-    console.log(`   Email: ${email}`);
-    console.log(`   Origem: ${novoContato.source}`);
-    
+    console.log(`✅ Novo contato salvo! (Origem: ${novoContato.source})`);
     res.status(200).send("Inscrição realizada com sucesso!");
   } catch (error) {
     console.error("❌ Erro ao salvar o novo contato:", error);
@@ -102,10 +85,12 @@ app.post("/inscrever", async (req, res) => {
   }
 });
 
-// --- Endpoint de envio de campanha (sem alterações) ---
+// --- ATUALIZADO! (Passo 12) Endpoint de envio de campanha ---
 app.post("/enviar-campanha", async (req, res) => {
-  console.log("📧 Recebido pedido para enviar campanha! Lendo contatos do Firebase...");
-  const { subject, body } = req.body;
+  console.log("📧 Recebido pedido para enviar campanha!");
+  
+  // 1. AGORA TAMBÉM RECEBEMOS O 'segmento'
+  const { subject, body, segmento } = req.body;
   const fromEmail = "contato@conselheirocristao.com.br";
   
   if (!subject || !body) { 
@@ -113,12 +98,30 @@ app.post("/enviar-campanha", async (req, res) => {
   }
 
   try {
-    const snapshot = await db.collection('contatos').get();
+    // 2. LÓGICA DE SEGMENTAÇÃO (A MUDANÇA ESTÁ AQUI)
+    let query; // Criamos a variável da consulta
     
-    if (snapshot.empty) { 
-      return res.status(400).send("Nenhum contato encontrado."); 
+    // Verificamos o valor do 'segmento'
+    if (!segmento || segmento === 'todos') {
+      // Se for "todos" (ou se não for enviado), a consulta é a padrão
+      console.log("   Segmento: 'todos'. Buscando todos os contatos.");
+      query = db.collection('contatos');
+    } else {
+      // Se for um segmento específico (ex: "conselheirocristao.com.br"),
+      // nós filtramos a busca no Firebase pelo campo 'source'.
+      console.log(`   Segmento: '${segmento}'. Buscando contatos onde 'source' == '${segmento}'.`);
+      query = db.collection('contatos').where('source', '==', segmento);
     }
 
+    // 3. EXECUTAMOS A CONSULTA (seja ela qual for)
+    const snapshot = await query.get();
+    
+    if (snapshot.empty) { 
+      console.log(`⚠️ Nenhum contato encontrado para o segmento: '${segmento}'`);
+      return res.status(400).send(`Nenhum contato encontrado para o segmento: '${segmento}'`); 
+    }
+
+    // 4. O RESTO DO LOOP É O MESMO (sem alterações)
     let count = 0;
     for (const doc of snapshot.docs) {
       const contact = doc.data();
@@ -136,12 +139,15 @@ app.post("/enviar-campanha", async (req, res) => {
       const sendEmailCommand = createSendEmailCommand(contact.email, fromEmail, subject, personalizedBody);
       
       await sesClient.send(sendEmailCommand);
-      console.log(`✅ E-mail enviado para: ${contact.email} (Origem: ${contact.source || 'N/A'})`);
+      console.log(`✅ E-mail enviado para: ${contact.email} (Segmento: ${segmento || 'todos'})`);
       count++;
     }
     
-    console.log(`🎉 Campanha finalizada! Total de e-mails enviados: ${count}`);
-    res.status(200).send(`Campanha enviada com sucesso para ${count} contato(s)!`);
+    // 5. MENSAGEM DE SUCESSO ATUALIZADA
+    const segmentoNome = segmento || 'todos';
+    console.log(`🎉 Campanha finalizada para o segmento '${segmentoNome}'! Total de e-mails enviados: ${count}`);
+    res.status(200).send(`Campanha enviada com sucesso para ${count} contato(s) do segmento '${segmentoNome}'!`);
+  
   } catch (error) {
     console.error("❌ Falha ao enviar campanha:", error);
     res.status(500).send("Erro ao enviar a campanha.");
@@ -151,15 +157,12 @@ app.post("/enviar-campanha", async (req, res) => {
 // --- Endpoint para cancelar a inscrição (sem alterações) ---
 app.get("/cancelar-inscricao", async (req, res) => {
   const contactId = req.query.id;
-  
   if (!contactId) {
     return res.status(400).send("ID do contato não fornecido. Não foi possível cancelar a inscrição.");
   }
-  
   try {
     await db.collection('contatos').doc(contactId).delete();
     console.log(`🗑️ Contato com ID ${contactId} foi removido.`);
-    
     res.send(`
       <div style="font-family: sans-serif; text-align: center; padding-top: 50px;">
         <h1>Inscrição Cancelada</h1>
@@ -234,7 +237,7 @@ app.post("/aws-sns-listener", async (req, res) => {
 });
 
 
-// --- PASSO FINAL: Iniciar o servidor ---
+// --- PASSO FINAL: Iniciar o servidor (sem alterações) ---
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
   console.log(`\n🚀 Servidor rodando na porta ${port}`);
